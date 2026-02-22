@@ -59,9 +59,9 @@ export function Task({ task, depth = 0 }: TaskProps) {
   const getStoredExpandedState = (): boolean => {
     try {
       const stored = localStorage.getItem(`task-expanded-${task.id}`)
-      return stored !== null ? stored === 'true' : true // Default to expanded
+      return stored !== null ? stored === 'true' : false // Default to collapsed
     } catch {
-      return true
+      return false
     }
   }
 
@@ -262,6 +262,15 @@ export function Task({ task, depth = 0 }: TaskProps) {
       const getLocalIsoString = (date: Date) => {
         const tzOffset = date.getTimezoneOffset() * 60000; // offset in milliseconds
         const localISOTime = (new Date(date.getTime() - tzOffset)).toISOString().slice(0, -1);
+        // Ensure seconds are present (Google Calendar API requires RFC3339 format)
+        // Format should be: "YYYY-MM-DDTHH:mm:ss" (19 characters)
+        if (localISOTime.length === 16) {
+          // Missing seconds, add ":00"
+          return localISOTime + ':00'
+        } else if (localISOTime.length >= 19) {
+          // Has seconds or more, take first 19 chars (YYYY-MM-DDTHH:mm:ss)
+          return localISOTime.slice(0, 19)
+        }
         return localISOTime;
       }
 

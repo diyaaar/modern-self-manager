@@ -25,49 +25,80 @@ async function getAuthenticatedCalendar(supabase: any, userId: string) {
     .eq('user_id', userId)
     .single()
 
-  if (tokenError || !tokens) return null
-
-  let accessToken = tokens.access_token
-  const now = Date.now()
-
-  // Proactively refresh if token expires within 5 minutes
-  if (tokens.expiry_date - now < 5 * 60 * 1000) {
-    try {
-      const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: process.env.GOOGLE_CLIENT_ID!,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-          refresh_token: tokens.refresh_token,
-          grant_type: 'refresh_token',
-        }),
-      })
-
-      if (refreshResponse.ok) {
-        const refreshData = await refreshResponse.json()
-        accessToken = refreshData.access_token
-        await supabase
-          .from('google_calendar_tokens')
-          .update({
-            access_token: refreshData.access_token,
-            expiry_date: Date.now() + (refreshData.expires_in * 1000),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', userId)
-      }
-    } catch (err) {
-      console.warn('[events/[id]] Token refresh failed, proceeding with existing token:', err)
+  if (tokenError || !tokens) {
+    if (tokenError && tokenError.code !== 'PGRST116') {
+      console.error('[events/[id]] Token fetch error:', tokenError)
     }
+    return null
+  }
+
+  // Use shared token refresh utility
+  const { refreshGoogleToken } = await import('../_lib/tokenRefresh')
+  const refreshResult = await refreshGoogleToken(
+    tokens.access_token,
+    tokens.refresh_token,
+    tokens.expiry_date
+  )
+
+  // If refresh failed and token is expired, return null
+  if (!refreshResult.success) {
+    const now = Date.now()
+    if (tokens.expiry_date - now < 0) {
+      console.error('[events/[id]] Token expired and refresh failed:', refreshResult.error)
+      return null
+    }
+    // If token is still valid, proceed with existing token
+    console.warn('[events/[id]] Token refresh failed but using existing token:', refreshResult.error)
+  }
+
+  // Update token in database if refresh was successful
+  if (refreshResult.success && refreshResult.accessToken !== tokens.access_token) {
+    await supabase
+      .from('google_calendar_tokens')
+      .update({
+        access_token: refreshResult.accessToken,
+        expiry_date: refreshResult.expiryDate,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId)
+      .catch((err) => {
+        console.warn('[events/[id]] Failed to update token in database:', err)
+      })
   }
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
   )
-  oauth2Client.setCredentials({ access_token: accessToken })
+  oauth2Client.setCredentials({ access_token: refreshResult.accessToken })
 
   return google.calendar({ version: 'v3', auth: oauth2Client })
+}
+
+// ── Helper: Get Google Calendar ID from calendar ID ─────────────
+async function getGoogleCalendarId(
+  supabase: ReturnType<typeof getSupabase>,
+  userId: string,
+  calendarId: string | null | undefined
+): Promise<string> {
+  // Default to primary calendar
+  if (!calendarId || calendarId === 'primary') {
+    return 'primary'
+  }
+
+  // Look up calendar in database
+  const { data: calRecord, error } = await supabase
+    .from('calendars')
+    .select('google_calendar_id')
+    .eq('id', calendarId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error && error.code !== 'PGRST116') {
+    console.warn(`[events/[id]] Error looking up calendar ${calendarId}:`, error)
+  }
+
+  return calRecord?.google_calendar_id || 'primary'
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -111,23 +142,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       const body = req.body
 
-      // Determine target Google calendar ID
-      let googleCalendarId = 'primary'
+      // Determine target Google calendar ID (check query, then body)
       const requestedCalendarId = (req.query.calendarId as string) || body?.calendarId
+      const googleCalendarId = await getGoogleCalendarId(supabase, userId, requestedCalendarId)
 
-      if (requestedCalendarId && requestedCalendarId !== 'primary') {
-        const { data: calRecord } = await supabase
-          .from('calendars')
-          .select('google_calendar_id')
-          .eq('id', requestedCalendarId)
-          .eq('user_id', userId)
-          .maybeSingle()
-        if (calRecord?.google_calendar_id) {
-          googleCalendarId = calRecord.google_calendar_id
-        }
-      }
-
-      console.log(`[PATCH] event=${id} calendar=${googleCalendarId}`)
+      console.log(`[PATCH] event=${id} calendar=${googleCalendarId} (requested=${requestedCalendarId})`)
 
       // Build start/end according to allDay flag
       // We must explicitly set the unused field (date vs dateTime) to null
@@ -151,25 +170,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (endDate) endField = { date: endDate, dateTime: null }
         } else {
           const tz = body.timeZone || 'Europe/Istanbul'
-          // Strip any trailing Z or +HH:MM offset so Google interprets the time
-          // as a wall-clock time in the given timeZone, not as UTC.
-          const stripOffset = (dt: string) => dt.replace(/(Z|[+-]\d{2}:\d{2})$/, '').slice(0, 19)
-          if (body.start) startField = { dateTime: stripOffset(body.start), timeZone: tz, date: null }
-          if (body.end) endField = { dateTime: stripOffset(body.end), timeZone: tz, date: null }
+          // Normalize datetime strings to RFC3339 format (with seconds)
+          // and pair with explicit timeZone so Google interprets correctly
+          const { normalizeDateTimeForGoogle } = await import('../_lib/dateFormat')
+          if (body.start) startField = { dateTime: normalizeDateTimeForGoogle(body.start), timeZone: tz, date: null }
+          if (body.end) endField = { dateTime: normalizeDateTimeForGoogle(body.end), timeZone: tz, date: null }
         }
       } else {
         // Fallback if allDay is not provided (though our frontend sends it)
+        const { normalizeDateTimeForGoogle } = await import('../_lib/dateFormat')
         if (body.start) {
           const isDateOnly = body.start.length === 10
           startField = isDateOnly
             ? { date: body.start }
-            : { dateTime: body.start.replace(/(Z|[+-]\d{2}:\d{2})$/, '').slice(0, 19), timeZone: body.timeZone || 'Europe/Istanbul' }
+            : { dateTime: normalizeDateTimeForGoogle(body.start), timeZone: body.timeZone || 'Europe/Istanbul' }
         }
         if (body.end) {
           const isDateOnly = body.end.length === 10
           endField = isDateOnly
             ? { date: body.end }
-            : { dateTime: body.end.replace(/(Z|[+-]\d{2}:\d{2})$/, '').slice(0, 19), timeZone: body.timeZone || 'Europe/Istanbul' }
+            : { dateTime: normalizeDateTimeForGoogle(body.end), timeZone: body.timeZone || 'Europe/Istanbul' }
         }
       }
 
@@ -199,39 +219,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         calendarId: requestedCalendarId || 'primary',
         allDay: !!ev.start?.date,
       })
-    } catch (err) {
-      console.error('Error updating event:', err)
-      return res.status(500).json({ error: 'Failed to update event', detail: (err as any)?.message })
+    } catch (err: any) {
+      // Handle specific Google API errors
+      if (err.code === 401 || err.status === 401) {
+        return res.status(401).json({ error: 'Google Calendar authentication failed', detail: err?.message })
+      }
+      if (err.code === 403 || err.status === 403) {
+        return res.status(403).json({ error: 'Google Calendar access denied', detail: err?.message })
+      }
+      if (err.code === 404 || err.status === 404) {
+        return res.status(404).json({ error: 'Event not found', detail: err?.message })
+      }
+      console.error('[events/[id] PATCH] Error updating event:', {
+        message: err?.message,
+        code: err?.code,
+        status: err?.status,
+      })
+      return res.status(500).json({ error: 'Failed to update event', detail: err?.message })
     }
   }
 
   // ── DELETE: Remove event ─────────────────────────────────────
   if (req.method === 'DELETE') {
     try {
-      let googleCalendarId = 'primary'
-      const requestedCalendarId = (req.query.calendarId as string)
+      // Determine target Google calendar ID (check query, then body)
+      const requestedCalendarId = (req.query.calendarId as string) || req.body?.calendarId
+      const googleCalendarId = await getGoogleCalendarId(supabase, userId, requestedCalendarId)
 
-      if (requestedCalendarId && requestedCalendarId !== 'primary') {
-        const { data: calRecord } = await supabase
-          .from('calendars')
-          .select('google_calendar_id')
-          .eq('id', requestedCalendarId)
-          .eq('user_id', userId)
-          .maybeSingle()
-        if (calRecord?.google_calendar_id) {
-          googleCalendarId = calRecord.google_calendar_id
-        }
-      }
-
-      console.log(`[DELETE] event=${id} calendar=${googleCalendarId}`)
+      console.log(`[DELETE] event=${id} calendar=${googleCalendarId} (requested=${requestedCalendarId})`)
 
       await calendar.events.delete({ calendarId: googleCalendarId, eventId: id })
       return res.status(204).end()
     } catch (err: any) {
-      if (err.code === 404 || err.code === 410) {
+      // Handle specific Google API errors
+      if (err.code === 404 || err.code === 410 || err.status === 404 || err.status === 410) {
+        // Event already deleted or not found - treat as success
         return res.status(204).end()
       }
-      console.error('Error deleting event:', err)
+      if (err.code === 401 || err.status === 401) {
+        return res.status(401).json({ error: 'Google Calendar authentication failed', detail: err?.message })
+      }
+      if (err.code === 403 || err.status === 403) {
+        return res.status(403).json({ error: 'Google Calendar access denied', detail: err?.message })
+      }
+      console.error('[events/[id] DELETE] Error deleting event:', {
+        message: err?.message,
+        code: err?.code,
+        status: err?.status,
+      })
       return res.status(500).json({ error: 'Failed to delete event', detail: err?.message })
     }
   }

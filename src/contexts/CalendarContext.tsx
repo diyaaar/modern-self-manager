@@ -80,7 +80,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
       const supabase = (await import('../lib/supabase')).getSupabaseClient()
       const { data, error } = await supabase
         .from('google_calendar_tokens')
-        .select('id')
+        .select('user_id')
         .eq('user_id', user.id)
         .maybeSingle() // Use maybeSingle() instead of single() to handle no rows gracefully
 
@@ -234,23 +234,31 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   }, [user, showToast])
 
   const disconnectGoogleCalendar = useCallback(async () => {
+    if (!user) {
+      showToast('Google Takvim\'i bağlantısını kesmek için lütfen giriş yapın', 'error', 3000)
+      return
+    }
+
     try {
-      const response = await fetch('/api/calendar/auth/disconnect', {
+      const response = await fetch(`/api/calendar/auth/disconnect?user_id=${user.id}`, {
         method: 'POST',
       })
 
       if (!response.ok) {
-        throw new Error('Bağlantı kesilemedi')
+        const errData = await response.json().catch(() => ({}))
+        throw new Error(errData?.error || 'Bağlantı kesilemedi')
       }
 
       setIsAuthenticated(false)
       setEvents([])
+      setCalendars([])
+      setSelectedCalendarIds([])
       showToast('Google Takvim bağlantısı kesildi', 'success', 2000)
     } catch (err) {
       console.error('Error disconnecting Google Calendar:', err)
-      showToast('Google Takvim bağlantısı kesilemedi', 'error', 3000)
+      showToast(err instanceof Error ? err.message : 'Google Takvim bağlantısı kesilemedi', 'error', 3000)
     }
-  }, [showToast])
+  }, [user, showToast])
 
   const fetchEvents = useCallback(async (date: Date, showLoading = false) => {
     if (!isAuthenticated || !user) return

@@ -79,35 +79,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(401).json({ error: 'Google Calendar not connected' })
       }
 
-      // Refresh token if needed
-      const now = Date.now()
-      let accessToken = tokens.access_token
+      // Refresh token if needed using shared utility
+      const { refreshGoogleToken } = await import('./_lib/tokenRefresh')
+      const refreshResult = await refreshGoogleToken(
+        tokens.access_token,
+        tokens.refresh_token,
+        tokens.expiry_date
+      )
 
-      if (tokens.expiry_date - now < 5 * 60 * 1000) {
-        const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: process.env.GOOGLE_CLIENT_ID!,
-            client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-            refresh_token: tokens.refresh_token,
-            grant_type: 'refresh_token',
-          }),
-        })
-
-        if (refreshResponse.ok) {
-          const refreshData = await refreshResponse.json()
-          accessToken = refreshData.access_token
-
-          await supabase
-            .from('google_calendar_tokens')
-            .update({
-              access_token: refreshData.access_token,
-              expiry_date: Date.now() + (refreshData.expires_in * 1000),
-            })
-            .eq('user_id', userId)
+      // If refresh failed and token is expired, return error
+      if (!refreshResult.success) {
+        const now = Date.now()
+        if (tokens.expiry_date - now < 0) {
+          console.error('[calendars POST] Token expired and refresh failed:', refreshResult.error)
+          return res.status(401).json({ error: 'Google Calendar token expired. Please reconnect.' })
         }
+        // If token is still valid, proceed with existing token
+        console.warn('[calendars POST] Token refresh failed but using existing token:', refreshResult.error)
       }
+
+      // Update token in database if refresh was successful
+      if (refreshResult.success && refreshResult.accessToken !== tokens.access_token) {
+        await supabase
+          .from('google_calendar_tokens')
+          .update({
+            access_token: refreshResult.accessToken,
+            expiry_date: refreshResult.expiryDate,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', userId)
+          .catch((err) => {
+            console.warn('[calendars POST] Failed to update token in database:', err)
+          })
+      }
+
+      const accessToken = refreshResult.accessToken
 
       // Initialize Google Calendar API
       const oauth2Client = new google.auth.OAuth2(
@@ -119,11 +125,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const calendar = google.calendar({ version: 'v3', auth: oauth2Client })
 
       // Fetch calendar list from Google
-      const response = await calendar.calendarList.list({
-        minAccessRole: 'reader',
-      })
-
-      const googleCalendars = response.data.items || []
+      let googleCalendars: any[] = []
+      try {
+        const response = await calendar.calendarList.list({
+          minAccessRole: 'reader',
+        })
+        googleCalendars = response.data.items || []
+      } catch (apiError: any) {
+        console.error('[calendars POST] Google Calendar API error:', {
+          message: apiError?.message,
+          code: apiError?.code,
+          status: apiError?.status,
+        })
+        // Handle specific Google API errors
+        if (apiError?.code === 401 || apiError?.status === 401) {
+          return res.status(401).json({ error: 'Google Calendar authentication failed. Please reconnect.' })
+        }
+        if (apiError?.code === 403 || apiError?.status === 403) {
+          return res.status(403).json({ error: 'Google Calendar access denied. Please check permissions.' })
+        }
+        throw apiError
+      }
 
       // Map Google Calendar colors
       const colorMap: Record<string, string> = {
@@ -142,60 +164,107 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Sync calendars to database
       const syncedCalendars = []
+      const syncErrors: string[] = []
+
       for (const googleCal of googleCalendars) {
-        if (!googleCal.id) continue
+        if (!googleCal.id) {
+          console.warn('[calendars POST] Skipping calendar without ID:', googleCal.summary)
+          continue
+        }
 
-        const calendarColor = googleCal.backgroundColor || colorMap[googleCal.colorId || ''] || '#3b82f6'
-        const isPrimary = googleCal.primary === true
+        try {
+          const calendarColor = googleCal.backgroundColor || colorMap[googleCal.colorId || ''] || '#3b82f6'
+          const isPrimary = googleCal.primary === true
 
-        // Check if calendar already exists
-        const { data: existing } = await supabase
-          .from('calendars')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('google_calendar_id', googleCal.id)
-          .maybeSingle()
-
-        if (existing) {
-          // Update existing calendar
-          const { data: updated } = await supabase
+          // Check if calendar already exists
+          const { data: existing, error: selectError } = await supabase
             .from('calendars')
-            .update({
-              name: googleCal.summary || 'Untitled Calendar',
-              color: calendarColor,
-              is_primary: isPrimary,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', existing.id)
-            .select()
-            .single()
+            .select('id')
+            .eq('user_id', userId)
+            .eq('google_calendar_id', googleCal.id)
+            .maybeSingle()
 
-          if (updated) syncedCalendars.push(updated)
-        } else {
-          // Create new calendar
-          const { data: created } = await supabase
-            .from('calendars')
-            .insert({
-              user_id: userId,
-              name: googleCal.summary || 'Untitled Calendar',
-              color: calendarColor,
-              is_primary: isPrimary,
-              google_calendar_id: googleCal.id,
-            })
-            .select()
-            .single()
+          if (selectError && selectError.code !== 'PGRST116') {
+            console.error(`[calendars POST] Error checking existing calendar ${googleCal.id}:`, selectError)
+            syncErrors.push(`Failed to check calendar ${googleCal.summary || googleCal.id}`)
+            continue
+          }
 
-          if (created) syncedCalendars.push(created)
+          if (existing) {
+            // Update existing calendar
+            const { data: updated, error: updateError } = await supabase
+              .from('calendars')
+              .update({
+                name: googleCal.summary || 'Untitled Calendar',
+                color: calendarColor,
+                is_primary: isPrimary,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', existing.id)
+              .select()
+              .single()
+
+            if (updateError) {
+              console.error(`[calendars POST] Error updating calendar ${googleCal.id}:`, updateError)
+              syncErrors.push(`Failed to update calendar ${googleCal.summary || googleCal.id}`)
+            } else if (updated) {
+              syncedCalendars.push(updated)
+            }
+          } else {
+            // Create new calendar
+            const { data: created, error: insertError } = await supabase
+              .from('calendars')
+              .insert({
+                user_id: userId,
+                name: googleCal.summary || 'Untitled Calendar',
+                color: calendarColor,
+                is_primary: isPrimary,
+                google_calendar_id: googleCal.id,
+              })
+              .select()
+              .single()
+
+            if (insertError) {
+              console.error(`[calendars POST] Error creating calendar ${googleCal.id}:`, insertError)
+              syncErrors.push(`Failed to create calendar ${googleCal.summary || googleCal.id}`)
+            } else if (created) {
+              syncedCalendars.push(created)
+            }
+          }
+        } catch (syncErr: any) {
+          console.error(`[calendars POST] Unexpected error syncing calendar ${googleCal.id}:`, syncErr)
+          syncErrors.push(`Unexpected error syncing calendar ${googleCal.summary || googleCal.id}`)
         }
       }
 
-      return res.status(200).json({ calendars: syncedCalendars })
+      // If we have sync errors but also some successful syncs, return partial success
+      if (syncErrors.length > 0 && syncedCalendars.length > 0) {
+        console.warn('[calendars POST] Partial sync success:', {
+          synced: syncedCalendars.length,
+          errors: syncErrors.length,
+        })
+      }
+
+      return res.status(200).json({
+        calendars: syncedCalendars,
+        ...(syncErrors.length > 0 && { warnings: syncErrors }),
+      })
     } catch (err: any) {
       console.error('[calendars POST] Error syncing calendars:', {
         message: err?.message,
         code: err?.code,
+        status: err?.status,
         stack: err?.stack,
       })
+
+      // Return appropriate status code based on error type
+      if (err?.code === 401 || err?.status === 401) {
+        return res.status(401).json({ error: 'Google Calendar authentication failed', detail: err?.message })
+      }
+      if (err?.code === 403 || err?.status === 403) {
+        return res.status(403).json({ error: 'Google Calendar access denied', detail: err?.message })
+      }
+
       return res.status(500).json({ error: 'Failed to sync calendars', detail: err?.message })
     }
   }

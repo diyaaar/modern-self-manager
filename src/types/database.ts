@@ -477,6 +477,35 @@ export interface Database {
           updated_at?: string | null
         }
       }
+      google_calendar_tokens: {
+        Row: {
+          user_id: string
+          access_token: string
+          refresh_token: string
+          expiry_date: number
+          token_type: string
+          scope: string
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          access_token: string
+          refresh_token: string
+          expiry_date: number
+          token_type?: string
+          scope?: string
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          access_token?: string
+          refresh_token?: string
+          expiry_date?: number
+          token_type?: string
+          scope?: string
+          updated_at?: string
+        }
+      }
     }
   }
 }

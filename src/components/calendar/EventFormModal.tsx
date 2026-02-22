@@ -165,11 +165,22 @@ export function EventFormModal({
                 startPayload = startStr.slice(0, 10)
                 endPayload = endStr.slice(0, 10)
             } else {
-                // Send the raw "wall clock" datetime string (YYYY-MM-DDTHH:mm)
-                // exactly as the user entered it — no UTC conversion.
+                // Send the datetime string in RFC3339 format (YYYY-MM-DDTHH:mm:ss)
+                // Google Calendar API requires seconds in the datetime string.
                 // The explicit timeZone field tells Google how to interpret it.
-                startPayload = startStr.slice(0, 16)  // "2026-02-21T17:30"
-                endPayload = endStr.slice(0, 16)
+                // If seconds are missing, add ":00"
+                const formatWithSeconds = (dt: string) => {
+                    if (dt.length === 16) {
+                        // Format: "YYYY-MM-DDTHH:mm" - add seconds
+                        return dt + ':00'
+                    } else if (dt.length >= 19) {
+                        // Format already has seconds or more, take first 19 chars (YYYY-MM-DDTHH:mm:ss)
+                        return dt.slice(0, 19)
+                    }
+                    return dt
+                }
+                startPayload = formatWithSeconds(startStr)
+                endPayload = formatWithSeconds(endStr)
             }
 
             const payload: Omit<CalendarEvent, 'id'> & { timeZone?: string } = {

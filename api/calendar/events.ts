@@ -35,49 +35,80 @@ async function getAuthenticatedCalendar(supabase: ReturnType<typeof getSupabase>
     .eq('user_id', userId)
     .single()
 
-  if (tokenError || !tokens) return null
-
-  let accessToken = tokens.access_token
-  const now = Date.now()
-
-  // Proactively refresh if token expires within 5 minutes
-  if (tokens.expiry_date - now < 5 * 60 * 1000) {
-    try {
-      const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: process.env.GOOGLE_CLIENT_ID!,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-          refresh_token: tokens.refresh_token,
-          grant_type: 'refresh_token',
-        }),
-      })
-
-      if (refreshResponse.ok) {
-        const refreshData = await refreshResponse.json()
-        accessToken = refreshData.access_token
-        await supabase
-          .from('google_calendar_tokens')
-          .update({
-            access_token: refreshData.access_token,
-            expiry_date: Date.now() + (refreshData.expires_in * 1000),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', userId)
-      }
-    } catch (err) {
-      console.warn('[events] Token refresh failed, proceeding with existing token:', err)
+  if (tokenError || !tokens) {
+    if (tokenError && tokenError.code !== 'PGRST116') {
+      console.error('[events] Token fetch error:', tokenError)
     }
+    return null
+  }
+
+  // Use shared token refresh utility
+  const { refreshGoogleToken } = await import('./_lib/tokenRefresh')
+  const refreshResult = await refreshGoogleToken(
+    tokens.access_token,
+    tokens.refresh_token,
+    tokens.expiry_date
+  )
+
+  // If refresh failed and token is expired, return null
+  if (!refreshResult.success) {
+    const now = Date.now()
+    if (tokens.expiry_date - now < 0) {
+      console.error('[events] Token expired and refresh failed:', refreshResult.error)
+      return null
+    }
+    // If token is still valid, proceed with existing token
+    console.warn('[events] Token refresh failed but using existing token:', refreshResult.error)
+  }
+
+  // Update token in database if refresh was successful
+  if (refreshResult.success && refreshResult.accessToken !== tokens.access_token) {
+    await supabase
+      .from('google_calendar_tokens')
+      .update({
+        access_token: refreshResult.accessToken,
+        expiry_date: refreshResult.expiryDate,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId)
+      .catch((err) => {
+        console.warn('[events] Failed to update token in database:', err)
+      })
   }
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
   )
-  oauth2Client.setCredentials({ access_token: accessToken })
+  oauth2Client.setCredentials({ access_token: refreshResult.accessToken })
 
   return google.calendar({ version: 'v3', auth: oauth2Client })
+}
+
+// ── Helper: Get Google Calendar ID from calendar ID ─────────────
+async function getGoogleCalendarId(
+  supabase: ReturnType<typeof getSupabase>,
+  userId: string,
+  calendarId: string | null | undefined
+): Promise<string> {
+  // Default to primary calendar
+  if (!calendarId || calendarId === 'primary') {
+    return 'primary'
+  }
+
+  // Look up calendar in database
+  const { data: calRecord, error } = await supabase
+    .from('calendars')
+    .select('google_calendar_id')
+    .eq('id', calendarId)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error && error.code !== 'PGRST116') {
+    console.warn(`[events] Error looking up calendar ${calendarId}:`, error)
+  }
+
+  return calRecord?.google_calendar_id || 'primary'
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -182,8 +213,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               color: cal.color,
             })
           }
-        } catch (err) {
-          console.error(`[events GET] Error fetching calendar ${cal.name}:`, err)
+        } catch (err: any) {
+          // Handle specific Google API errors
+          if (err.code === 401 || err.status === 401) {
+            console.error(`[events GET] Authentication failed for calendar ${cal.name}:`, err)
+            // Continue with other calendars instead of failing completely
+            continue
+          }
+          if (err.code === 403 || err.status === 403) {
+            console.error(`[events GET] Access denied for calendar ${cal.name}:`, err)
+            // Continue with other calendars instead of failing completely
+            continue
+          }
+          console.error(`[events GET] Error fetching calendar ${cal.name}:`, {
+            message: err?.message,
+            code: err?.code,
+            status: err?.status,
+          })
         }
       }
 
@@ -223,18 +269,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Determine target Google calendar ID
-      let googleCalendarId = 'primary'
-      if (requestedCalendarId && requestedCalendarId !== 'primary') {
-        const { data: calRecord } = await supabase
-          .from('calendars')
-          .select('google_calendar_id')
-          .eq('id', requestedCalendarId)
-          .eq('user_id', userId)
-          .maybeSingle()
-        if (calRecord?.google_calendar_id) {
-          googleCalendarId = calRecord.google_calendar_id
-        }
-      }
+      const googleCalendarId = await getGoogleCalendarId(supabase, userId, requestedCalendarId)
 
       // Always default to Europe/Istanbul for this app; never fall back to server-side UTC
       const tz = timeZone || 'Europe/Istanbul'
@@ -267,15 +302,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // IMPORTANT: Do NOT use new Date(...).toISOString() here.
         // toISOString() always converts to UTC and appends 'Z', which causes Google
         // Calendar to ignore the timeZone field, resulting in a +3h offset for Istanbul.
-        // Instead, strip any trailing 'Z' or offset suffix and send the local datetime
-        // string as-is, paired with an explicit IANA timeZone.
-        const stripOffset = (dt: string) => {
-          // Remove trailing Z (UTC marker) or +HH:MM / -HH:MM offset so the string
-          // is treated as a "wall clock" time in the given timeZone.
-          return dt.replace(/(Z|[+-]\d{2}:\d{2})$/, '').slice(0, 19)
-        }
-        googleStart = { dateTime: stripOffset(sDt), timeZone: tz }
-        googleEnd = { dateTime: stripOffset(eDt), timeZone: tz }
+        // Instead, normalize the datetime string to RFC3339 format (with seconds)
+        // and pair it with an explicit IANA timeZone.
+        const { normalizeDateTimeForGoogle } = await import('./_lib/dateFormat')
+        googleStart = { dateTime: normalizeDateTimeForGoogle(sDt), timeZone: tz }
+        googleEnd = { dateTime: normalizeDateTimeForGoogle(eDt), timeZone: tz }
       }
 
       const eventResource = {
@@ -308,6 +339,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
 
     } catch (err: any) {
+      // Handle specific Google API errors
+      if (err.code === 401 || err.status === 401) {
+        return res.status(401).json({
+          error: 'Google Calendar authentication failed',
+          detail: err?.message,
+        })
+      }
+      if (err.code === 403 || err.status === 403) {
+        return res.status(403).json({
+          error: 'Google Calendar access denied',
+          detail: err?.message,
+        })
+      }
       console.error('[events POST] Error creating event:', {
         message: err?.message,
         code: err?.code,
