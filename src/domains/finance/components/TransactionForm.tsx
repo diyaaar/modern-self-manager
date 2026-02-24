@@ -282,7 +282,7 @@ export function TransactionForm({ onClose, onSuccess, presetType, presetObligati
                 // ── CREATE MODE ──
                 const txn = await createTransaction({
                     type,
-                    amountTl: rawAmount,
+                    amountTl,
                     currency,
                     category_id: categoryId || undefined,
                     tag_id: tagId || undefined,

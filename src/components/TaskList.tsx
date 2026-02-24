@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { DndContext, closestCenter, KeyboardSensor, TouchSensor, MouseSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
@@ -25,13 +25,13 @@ function SortableTask({ task, depth = 0 }: SortableTaskProps) {
 
   return (
     <div ref={setNodeRef} style={style}>
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-1">
         <button
           {...attributes}
           {...listeners}
-          className="mt-4 p-1 cursor-grab active:cursor-grabbing text-text-tertiary hover:text-text-secondary transition-colors"
+          className="mt-3 p-2 cursor-grab active:cursor-grabbing text-text-tertiary hover:text-text-secondary transition-colors touch-none"
         >
-          <GripVertical className="w-4 h-4" />
+          <GripVertical className="w-5 h-5" />
         </button>
         <div className="flex-1 min-w-0">
           <Task task={task} depth={depth} />
@@ -44,7 +44,17 @@ function SortableTask({ task, depth = 0 }: SortableTaskProps) {
 export const TaskList = memo(function TaskList() {
   const { filteredAndSortedTasks, updateTask } = useTasks()
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 5,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
