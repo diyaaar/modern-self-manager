@@ -100,17 +100,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const refreshData = await refreshResponse.json()
             accessToken = refreshData.access_token
 
-            await supabase
-              .from('google_calendar_tokens')
-              .update({
-                access_token: refreshData.access_token,
-                expiry_date: Date.now() + (refreshData.expires_in * 1000),
-                updated_at: new Date().toISOString(),
-              })
-              .eq('user_id', userId)
-              .catch((err) => {
-                console.warn('[calendars POST] Failed to update token in database:', err)
-              })
+            try {
+              await supabase
+                .from('google_calendar_tokens')
+                .update({
+                  access_token: refreshData.access_token,
+                  expiry_date: Date.now() + (refreshData.expires_in * 1000),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('user_id', userId)
+            } catch (err: any) {
+              console.warn('[calendars POST] Failed to update token in database:', err)
+            }
           } else {
             // If refresh failed but token is still valid, proceed with existing token
             if (tokens.expiry_date - now >= 0) {

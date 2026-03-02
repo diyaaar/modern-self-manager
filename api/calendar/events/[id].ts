@@ -53,17 +53,18 @@ async function getAuthenticatedCalendar(supabase: any, userId: string) {
       if (refreshResponse.ok) {
         const refreshData = await refreshResponse.json()
         accessToken = refreshData.access_token
-        await supabase
-          .from('google_calendar_tokens')
-          .update({
-            access_token: refreshData.access_token,
-            expiry_date: Date.now() + (refreshData.expires_in * 1000),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', userId)
-          .catch((err) => {
-            console.warn('[events/[id]] Failed to update token in database:', err)
-          })
+        try {
+          await supabase
+            .from('google_calendar_tokens')
+            .update({
+              access_token: refreshData.access_token,
+              expiry_date: Date.now() + (refreshData.expires_in * 1000),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('user_id', userId)
+        } catch (err: any) {
+          console.warn('[events/[id]] Failed to update token in database:', err)
+        }
       }
     } catch (err) {
       console.warn('[events/[id]] Token refresh failed, proceeding with existing token:', err)
@@ -91,7 +92,7 @@ async function getGoogleCalendarId(
   }
 
   // Look up calendar in database
-  const { data: calRecord, error } = await supabase
+  const { data: calRecord, error } = await (supabase as any)
     .from('calendars')
     .select('google_calendar_id')
     .eq('id', calendarId)

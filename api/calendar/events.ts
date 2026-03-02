@@ -63,17 +63,18 @@ async function getAuthenticatedCalendar(supabase: ReturnType<typeof getSupabase>
       if (refreshResponse.ok) {
         const refreshData = await refreshResponse.json()
         accessToken = refreshData.access_token
-        await supabase
-          .from('google_calendar_tokens')
-          .update({
-            access_token: refreshData.access_token,
-            expiry_date: Date.now() + (refreshData.expires_in * 1000),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', userId)
-          .catch((err) => {
-            console.warn('[events] Failed to update token in database:', err)
-          })
+        try {
+          await supabase
+            .from('google_calendar_tokens')
+            .update({
+              access_token: refreshData.access_token,
+              expiry_date: Date.now() + (refreshData.expires_in * 1000),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('user_id', userId)
+        } catch (err: any) {
+          console.warn('[events] Failed to update token in database:', err)
+        }
       }
     } catch (err) {
       console.warn('[events] Token refresh failed, proceeding with existing token:', err)
@@ -101,7 +102,7 @@ async function getGoogleCalendarId(
   }
 
   // Look up calendar in database
-  const { data: calRecord, error } = await supabase
+  const { data: calRecord, error } = await (supabase as any)
     .from('calendars')
     .select('google_calendar_id')
     .eq('id', calendarId)
@@ -335,7 +336,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           return cleaned
         }
-        
+
         try {
           googleStart = { dateTime: stripOffset(sDt), timeZone: tz }
           googleEnd = { dateTime: stripOffset(eDt), timeZone: tz }
@@ -345,9 +346,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             end: eDt,
             error: formatErr?.message,
           })
-          return res.status(400).json({ 
-            error: 'Invalid datetime format', 
-            detail: formatErr?.message || 'Failed to parse start/end datetime' 
+          return res.status(400).json({
+            error: 'Invalid datetime format',
+            detail: formatErr?.message || 'Failed to parse start/end datetime'
           })
         }
       }
