@@ -56,8 +56,14 @@ Piyasadaki karmaşık proje yönetimi araçlarına ya da birbirinden kopuk uygul
 - Özel durum akışları (Status workflow) tanımla
 - Etiket sistemi ile hızlı filtreleme
 - Dinamik ilerleme hesaplama (depolanan değer yok, her zaman gerçek zamanlı)
-- Google Takvim entegrasyonu (manuel senkronizasyon)
 - Tekrarlayan görev şablonları
+
+### 📅 Takvim & Google Entegrasyonu
+- Google Takvim hesabımla sorunsuz bağlantı (OAuth2)
+- Görevlerimi tek tıkla takvimime etkinlik olarak gönderebiliyorum
+- Manuel senkronizasyon kontrolü sayesinde istemediğim hiçbir şey takvime eklenmiyor
+- Tam gün (All-day) etkinlikleri ve saat hassasiyetli planlamaları kusursuz yönetiyor
+- Token bileşenleri tamamen sunucu (server-side) tarafında saklanıp güvenliğim korunuyor
 
 ### 💰 Finans Modülü
 - Nakit bazlı muhasebe (tahakkuk yok)
