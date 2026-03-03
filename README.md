@@ -1,226 +1,166 @@
-# AI-Powered Todo List Application
+<div align="center">
 
-A modern, gamified todo list web application with AI-powered task suggestions, unlimited subtask nesting, and Supabase backend integration.
+# 🧠 Modern Self-Manager
 
-## Tech Stack
+**Kişisel üretkenliğini tek bir yerden yönet.**
 
-- **Frontend**: React 18+ with TypeScript
-- **Styling**: Tailwind CSS (Dark Mode)
-- **State Management**: React Context API
-- **Database**: Supabase (PostgreSQL)
-- **AI Integration**: OpenAI GPT-4 API
-- **Animations**: Framer Motion
-- **Icons**: Lucide React
-- **Date Handling**: date-fns
+Görevler, finans takibi ve dosya yönetimini bir araya getiren, tamamen kişisel kullanım için tasarlanmış modern bir web uygulaması.
 
-## Prerequisites
+![Made with](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)
+![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?style=flat-square&logo=supabase)
+![Vite](https://img.shields.io/badge/Vite-Build-646CFF?style=flat-square&logo=vite)
 
-- Node.js 18+ and npm/yarn/pnpm
-- Supabase account and project
-- OpenAI API key
+</div>
 
-## Setup Instructions
+---
 
-### 1. Install Dependencies
+## 🌟 Nedir?
+
+**Modern Self-Manager**, günlük hayatını organize etmek için ihtiyaç duyduğun her şeyi tek bir arayüzde sunan kişisel bir yönetim sistemidir.
+
+Karmaşık proje yönetimi araçlarına ya da birbirinden kopuk uygulamalara ihtiyaç duymadan; görevlerini, harcamalarını ve dosyalarını sade, hızlı ve güçlü bir arayüzle takip edebilirsin.
+
+---
+
+## 📸 Ekran Görüntüleri
+
+### 📋 Görev Yönetimi
+> Sonsuz hiyerarşiyle görev oluştur, öncelik ver, etiketle ve takip et.
+
+![Görev Yönetimi](public/screenshot-todo.png)
+
+---
+
+### 💰 Finans Takibi
+> Gelir ve giderlerini kategorilere ayırarak anlık finansal durumunu görüntüle.
+
+![Finans Takibi](public/screenshot-finance.png)
+
+---
+
+### 🗂️ Dosya Yönetimi
+> Görev ve finanslarına bağlı dosyalarını güvenli ve düzenli şekilde sakla.
+
+![Dosya Yönetimi](public/screenshot-storage.png)
+
+---
+
+## ⚡ Özellikler
+
+### 📋 Todo Modülü
+- Çalışma alanları (Workspace) ile projelerini grupla
+- Sonsuz derinlikte alt görev hiyerarşisi
+- Özel durum akışları (Status workflow) tanımla
+- Etiket sistemi ile hızlı filtreleme
+- Dinamik ilerleme hesaplama (depolanan değer yok, her zaman gerçek zamanlı)
+- Google Takvim entegrasyonu (manuel senkronizasyon)
+- Tekrarlayan görev şablonları
+
+### 💰 Finans Modülü
+- Nakit bazlı muhasebe (tahakkuk yok)
+- Kategori ve etiket sistemi
+- Borç / Alacak takibi (Obligation)
+- Çoklu döviz desteği
+- Tekrarlayan gelir/gider şablonları
+
+### 🗂️ Depolama Modülü
+- Görev ve finanslara bağlı dosya yönetimi
+- Güvenli, özel bucket erişimi
+- Polimorfik dosya tablosu
+
+---
+
+## 🏗️ Teknik Mimari
+
+```
+Client UI  →  Server Actions  →  Service Layer  →  Supabase (Postgres + Storage)
+```
+
+- **Frontend:** React 18 + TypeScript + Vite
+- **Stil:** Tailwind CSS
+- **Backend:** Supabase (Auth, Database, Storage)
+- **Dağıtım:** Vercel
+- **Mimari:** Domain-driven, server-first hybrid
+
+### Temel Prensipler
+- ✅ Tüm mutasyonlar server aksiyonları üzerinden geçer
+- ✅ Her tablo Row Level Security (RLS) ile korunur
+- ✅ Para birimleri integer (kuruş) olarak saklanır — float asla
+- ✅ Hesaplanan değerler veritabanında saklanmaz
+- ✅ Domain sınırları korunur (Finance ↔ Todo birbirini mutate etmez)
+
+---
+
+## 🗄️ Veritabanı Şeması
+
+Tüm tablolar izole domain yapısıyla organize edilmiştir:
+
+| Alan | Tablolar |
+|------|---------|
+| **Todo** | `workspaces`, `tasks`, `task_tags`, `todo_tags`, `recurring_templates` |
+| **Finance** | `finance_transactions`, `finance_categories`, `finance_tags`, `finance_obligations` |
+| **Storage** | `files` (polimorfik) |
+| **Auth** | `user_integrations` |
+
+Her tablo: `user_id + RLS + soft delete` ile güvence altındadır.
+
+---
+
+## 🚀 Kurulum
 
 ```bash
+# Repoyu klonla
+git clone https://github.com/[kullanici]/modern-self-manager.git
+cd modern-self-manager
+
+# Bağımlılıkları yükle
 npm install
-```
 
-### 2. Environment Variables
+# Ortam değişkenlerini ayarla
+cp .env.example .env.local
+# .env.local içine Supabase URL ve Anon Key'i ekle
 
-Create a `.env` file in the root directory with the following variables:
-
-```env
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-VITE_OPENAI_API_KEY=your_openai_api_key
-```
-
-**⚠️ IMPORTANT: Supabase Key Security**
-
-- **DO NOT** use the `sb_secret_...` key (Service Role Key) in your `.env` file
-- **USE** the `anon` or `public` key from your Supabase dashboard
-- Secret keys should NEVER be exposed in frontend code
-
-**How to get your Anon Key:**
-1. Go to your Supabase project dashboard: https://supabase.com/dashboard
-2. Select your project
-3. Go to **Settings** → **API**
-4. Copy the **`anon` `public`** key (NOT the `service_role` `secret` key)
-5. The anon key typically starts with `eyJ...` (JWT format)
-
-**Example:**
-```env
-# ✅ CORRECT - Anon/Public key (safe for frontend)
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-
-# ❌ WRONG - Secret key (NEVER use in frontend!)
-VITE_SUPABASE_ANON_KEY=your_secret_key_here
-```
-
-### 3. Supabase Database Setup
-
-Run the following SQL in your Supabase SQL Editor to create the required tables:
-
-```sql
--- Users table
-CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  email TEXT UNIQUE NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  streak_count INTEGER DEFAULT 0,
-  total_xp INTEGER DEFAULT 0,
-  level INTEGER DEFAULT 1
-);
-
--- Tasks table (recursive for subtasks)
-CREATE TABLE tasks (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  parent_task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  description TEXT,
-  priority TEXT CHECK (priority IN ('high', 'medium', 'low')),
-  deadline TIMESTAMP,
-  completed BOOLEAN DEFAULT FALSE,
-  completed_at TIMESTAMP,
-  position INTEGER,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- Tags table
-CREATE TABLE tags (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  color TEXT NOT NULL
-);
-
--- Task tags junction table
-CREATE TABLE task_tags (
-  task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-  tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
-  PRIMARY KEY (task_id, tag_id)
-);
-
--- AI suggestions log
-CREATE TABLE ai_suggestions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-  suggestion TEXT NOT NULL,
-  accepted BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-### 4. Enable Row Level Security (RLS)
-
-In Supabase, enable RLS on all tables and create policies to allow users to only access their own data.
-
-### 5. Run Development Server
-
-```bash
+# Geliştirme sunucusunu başlat
 npm run dev
 ```
 
-The application will be available at `http://localhost:5173`
+### Gerekli Ortam Değişkenleri
 
-## Project Structure
+```
+VITE_SUPABASE_URL=https://[proje-id].supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+---
+
+## 📁 Proje Yapısı
 
 ```
 src/
-  components/     # Reusable UI components
-  contexts/       # React Context providers
-  hooks/          # Custom React hooks
-  lib/            # Third-party library configurations
-  pages/          # Page components
-  types/          # TypeScript type definitions
-  utils/          # Utility functions
+├── domains/          # Domain-driven iş mantığı
+│   ├── finance/      # Finans servisleri ve tipleri
+│   └── todo/         # Todo servisleri ve tipleri
+├── contexts/         # Global React context'leri
+├── components/       # UI bileşenleri
+├── pages/            # Sayfa bileşenleri
+├── lib/              # Yardımcı kütüphaneler (Supabase, vb.)
+└── api/              # Server-side API route'ları
 ```
 
-## Features (Phase 1 - Completed)
+---
 
-- ✅ React + TypeScript + Vite setup
-- ✅ Tailwind CSS with dark mode
-- ✅ Supabase client configuration
-- ✅ Authentication (Sign up, Sign in, Sign out)
-- ✅ Protected routes
-- ✅ Base layout components
+## 🔐 Güvenlik
 
-## Features (Phase 2 - Completed)
+- Tüm veriler `auth.uid()` bazlı RLS politikalarıyla korunur
+- Hassas anahtarlar (API key'ler) asla client-side koda gömülmez
+- Storage dosyaları yalnızca signed URL ile erişilebilir
+- Token'lar yalnızca sunucu tarafında saklanır
 
-- ✅ Task management with nested subtasks (unlimited nesting)
-- ✅ CRUD operations for tasks (Create, Read, Update, Delete)
-- ✅ Recursive subtask rendering
-- ✅ Drag-and-drop reordering (root level tasks)
-- ✅ Priority management (High, Medium, Low) with color-coded badges
-- ✅ Deadline management with date picker and overdue indicators
-- ✅ Completion percentage calculation based on subtasks
-- ✅ Task filtering (All, Active, Completed)
-- ✅ Task sorting (Created Date, Deadline, Priority, Title)
-- ✅ Search functionality
-- ✅ Progress bars for tasks with subtasks
-- ✅ Smooth animations with Framer Motion
+---
 
-## Features (Phase 3 - Completed)
+<div align="center">
 
-- ✅ OpenAI API integration for AI-powered features
-- ✅ AI subtask suggestions - Generate 5-7 practical subtasks for any task
-- ✅ AI suggestions modal with checkbox selection interface
-- ✅ Batch add selected AI suggestions as subtasks
-- ✅ Natural language task creation - Parse natural language input into structured tasks
-- ✅ Automatic extraction of priority and deadline from natural language
-- ✅ AI suggestions logging to database
-- ✅ Loading states and error handling for all AI features
-- ✅ Smooth animations for AI interactions
+Kişisel kullanım için geliştirilmiştir. 
 
-## Features (Phase 4 - Completed)
-
-- ✅ Tag system with full CRUD operations
-- ✅ Tag creation with color selection (10 predefined colors)
-- ✅ Tag assignment to tasks via TagSelector component
-- ✅ Tag display on tasks with TagBadge component
-- ✅ Tag filtering - Filter tasks by one or multiple tags
-- ✅ Date range filtering - Filter tasks by deadline date range
-- ✅ Enhanced TaskFilters component with tag and date range controls
-- ✅ Real-time tag updates with Supabase subscriptions
-
-## Features (Phase 6 - Completed)
-
-- ✅ Toast notification system with success, error, info, and warning types
-- ✅ Skeleton loaders for loading states (TaskSkeleton, TaskListSkeleton)
-- ✅ Enhanced micro-interactions:
-  - Hover effects with scale transforms
-  - Active state animations (scale down on click)
-  - Smooth transitions on all interactive elements
-  - Focus ring indicators for keyboard navigation
-- ✅ Responsive design (mobile-first):
-  - Mobile-optimized layouts and spacing
-  - Responsive typography and button sizes
-  - Collapsible user info on mobile
-  - Touch-friendly button sizes and spacing
-- ✅ Accessibility features:
-  - ARIA labels on all interactive elements
-  - Keyboard navigation support with focus indicators
-  - Semantic HTML structure
-  - Screen reader friendly labels
-  - Proper role attributes (checkbox, main, etc.)
-- ✅ Enhanced animations:
-  - Smooth page transitions
-  - Staggered list animations
-  - Spring animations for checkboxes
-  - Hover and active state animations
-  - Toast notification animations
-
-## Development
-
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-
-## License
-
-MIT
-
+</div>
