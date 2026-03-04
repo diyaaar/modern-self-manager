@@ -2,7 +2,6 @@ import { createContext, useContext, useState, useEffect, ReactNode, useCallback,
 import { useAuth } from './AuthContext'
 import { useToast } from './ToastContext'
 import { Calendar as CalendarType } from '../types/calendar'
-import { buildCalendarEventPayload } from '../lib/calendarEventFormat'
 
 const SELECTED_CALENDARS_STORAGE_KEY = 'calendar-selected-ids'
 const EVENTS_CACHE_EXPIRY = 5 * 60 * 1000 // 5 minutes
@@ -81,7 +80,7 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
       const supabase = (await import('../lib/supabase')).getSupabaseClient()
       const { data, error } = await supabase
         .from('google_calendar_tokens')
-        .select('user_id')
+        .select('id')
         .eq('user_id', user.id)
         .maybeSingle() // Use maybeSingle() instead of single() to handle no rows gracefully
 
@@ -235,31 +234,23 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
   }, [user, showToast])
 
   const disconnectGoogleCalendar = useCallback(async () => {
-    if (!user) {
-      showToast('Google Takvim\'i bağlantısını kesmek için lütfen giriş yapın', 'error', 3000)
-      return
-    }
-
     try {
-      const response = await fetch(`/api/calendar/auth/disconnect?user_id=${user.id}`, {
+      const response = await fetch('/api/calendar/auth/disconnect', {
         method: 'POST',
       })
 
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({}))
-        throw new Error(errData?.error || 'Bağlantı kesilemedi')
+        throw new Error('Bağlantı kesilemedi')
       }
 
       setIsAuthenticated(false)
       setEvents([])
-      setCalendars([])
-      setSelectedCalendarIds([])
       showToast('Google Takvim bağlantısı kesildi', 'success', 2000)
     } catch (err) {
       console.error('Error disconnecting Google Calendar:', err)
-      showToast(err instanceof Error ? err.message : 'Google Takvim bağlantısı kesilemedi', 'error', 3000)
+      showToast('Google Takvim bağlantısı kesilemedi', 'error', 3000)
     }
-  }, [user, showToast])
+  }, [showToast])
 
   const fetchEvents = useCallback(async (date: Date, showLoading = false) => {
     if (!isAuthenticated || !user) return
@@ -448,23 +439,10 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
     currentDateRef.current = date
   }, [])
 
-  const createEvent = useCallback(async (event: Omit<CalendarEvent, 'id'> & { timeZone?: string }): Promise<CalendarEvent | null> => {
+  const createEvent = useCallback(async (event: Omit<CalendarEvent, 'id'>): Promise<CalendarEvent | null> => {
     if (!isAuthenticated || !user) return null
 
     try {
-      const payload = buildCalendarEventPayload({
-        summary: event.summary,
-        start: event.start,
-        end: event.end,
-        allDay: event.allDay,
-        timeZone: (event as { timeZone?: string }).timeZone,
-        description: event.description,
-        location: event.location,
-        colorId: event.colorId,
-        color: event.color,
-        calendarId: event.calendarId,
-      })
-
       const supabase = (await import('../lib/supabase')).getSupabaseClient()
       const { data: { session } } = await supabase.auth.getSession()
 
@@ -475,8 +453,15 @@ export function CalendarProvider({ children }: { children: ReactNode }) {
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
         body: JSON.stringify({
-          ...payload,
+          ...event,
           user_id: user.id,
+          // Forward all Google Calendar fields explicitly
+          summary: event.summary,
+          allDay: event.allDay,
+          calendarId: event.calendarId,
+          colorId: event.colorId,
+          location: event.location,
+          description: event.description,
         }),
       })
 
