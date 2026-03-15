@@ -1,4 +1,5 @@
 import { useState, memo } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { DndContext, closestCenter, KeyboardSensor, TouchSensor, MouseSensor, useSensor, useSensors, DragEndEvent, DragStartEvent, DragOverlay, defaultDropAnimationSideEffects } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -48,9 +49,14 @@ function SortableTask({ task, depth = 0 }: SortableTaskProps) {
   }
 
   return (
-    <div ref={setNodeRef} style={style}>
+    <motion.div
+      ref={setNodeRef}
+      style={style}
+      layout={!isDragging}
+      transition={{ layout: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } }}
+    >
       <TaskRow task={task} depth={depth} dragHandleProps={{ ...attributes, ...listeners }} />
-    </div>
+    </motion.div>
   )
 }
 
@@ -131,9 +137,11 @@ export const TaskList = memo(function TaskList() {
     >
       <SortableContext items={rootTaskIds} strategy={verticalListSortingStrategy}>
         <div className="space-y-2 relative">
-          {filteredAndSortedTasks.map((task) => (
-            <SortableTask key={task.id} task={task} depth={0} />
-          ))}
+          <AnimatePresence initial={false}>
+            {filteredAndSortedTasks.map((task) => (
+              <SortableTask key={task.id} task={task} depth={0} />
+            ))}
+          </AnimatePresence>
         </div>
       </SortableContext>
       
